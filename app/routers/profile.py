@@ -45,6 +45,7 @@ CandidateUser = Annotated[User, Depends(require_role(UserRole.JOB_SEEKER))]
 # 1. Profile Endpoints (GET / and PUT /)
 # ============================================================================
 
+@router.get("", response_model=ProfileOut)
 @router.get("/", response_model=ProfileOut)
 async def get_profile(
     current_user: CandidateUser,
@@ -61,6 +62,7 @@ async def get_profile(
     return profile
 
 
+@router.put("", response_model=ProfileOut)
 @router.put("/", response_model=ProfileOut)
 async def upsert_profile(
     profile_in: ProfileUpdate,

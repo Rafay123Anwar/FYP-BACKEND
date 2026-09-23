@@ -107,6 +107,7 @@ async def upload_resume(
     return resume
 
 
+@router.get("", response_model=list[ResumeOut])
 @router.get("/", response_model=list[ResumeOut])
 async def list_resumes(
     current_user: CandidateUser,

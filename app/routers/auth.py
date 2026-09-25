@@ -22,16 +22,8 @@ async def register(
     user_in: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Register a new user account asynchronously with race condition protection."""
-    # 1. Pre-check: Verify email uniqueness
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    if result.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
-        )
-
-    # 2. Hash password and build user instance
+    """Register a new user account. Race condition protection via DB unique constraint."""
+    # Hash password first (CPU-bound, ~100ms) before touching the DB
     hashed_password = await get_password_hash(user_in.password)
     user = User(
         email=user_in.email,
@@ -40,7 +32,8 @@ async def register(
         role=user_in.role or UserRole.JOB_SEEKER,
     )
 
-    # 3. High-concurrency race condition protection
+    # The unique constraint on email handles race conditions atomically.
+    # No pre-check SELECT needed — that was an extra DB roundtrip.
     db.add(user)
     try:
         await db.commit()
@@ -87,4 +80,11 @@ async def read_current_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Retrieve details of the currently authenticated user."""
-    return current_user
+    from fastapi.responses import JSONResponse
+    from fastapi.encoders import jsonable_encoder
+    # Short TTL cache: tells CDN/edge/browser to cache for 30s
+    # Slashes repeated /me calls under heavy dashboard load.
+    return JSONResponse(
+        content=jsonable_encoder(UserOut.model_validate(current_user)),
+        headers={"Cache-Control": "private, max-age=30"},
+    )

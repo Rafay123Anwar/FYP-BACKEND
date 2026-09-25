@@ -639,13 +639,19 @@ async def sync_ai_data(
         # Delete existing candidate skills to avoid duplicates
         await db.execute(delete(CandidateSkill).where(CandidateSkill.user_id == current_user.id))
 
+        # BULK fetch all existing skills matching names in one query (avoids N+1)
+        lower_names = [n.lower() for n in all_skill_names]
+        existing_result = await db.execute(
+            select(Skill).where(func.lower(Skill.name).in_(lower_names))
+        )
+        existing_skills = {s.name.lower(): s for s in existing_result.scalars().all()}
+
         for name in all_skill_names:
-            skill_res = await db.execute(select(Skill).where(func.lower(Skill.name) == name.lower()))
-            skill = skill_res.scalar_one_or_none()
+            skill = existing_skills.get(name.lower())
             if not skill:
                 skill = Skill(name=name)
                 db.add(skill)
-                await db.flush()
+                await db.flush()  # get the ID before creating the association
 
             cand_skill = CandidateSkill(user_id=current_user.id, skill_id=skill.id)
             db.add(cand_skill)

@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from pathlib import Path
 from typing import Annotated
@@ -78,12 +79,13 @@ async def upload_resume(
     clean_original_name = Path(file.filename).name.replace(" ", "_")
     storage_path = f"{current_user.id}/{uuid.uuid4().hex}_{clean_original_name}"
 
-    # Upload to Supabase Storage bucket
+    # Upload to Supabase Storage bucket (sync SDK — offloaded to thread pool)
     try:
-        supabase_client.storage.from_(BUCKET_NAME).upload(
-            path=storage_path,
-            file=content,
-            file_options={"content-type": content_type, "upsert": "false"},
+        await asyncio.to_thread(
+            supabase_client.storage.from_(BUCKET_NAME).upload,
+            storage_path,
+            content,
+            {"content-type": content_type, "upsert": "false"},
         )
     except Exception as e:
         raise HTTPException(
@@ -139,13 +141,15 @@ async def delete_resume(
             detail="Resume not found",
         )
 
-    # Extract storage path and delete from Supabase bucket
+    # Extract storage path and delete from Supabase bucket (sync SDK — offloaded to thread)
     storage_path = extract_storage_path(resume.file_path, bucket=BUCKET_NAME)
     try:
-        supabase_client.storage.from_(BUCKET_NAME).remove([storage_path])
+        await asyncio.to_thread(
+            supabase_client.storage.from_(BUCKET_NAME).remove,
+            [storage_path],
+        )
     except Exception:
-        # Proceed with DB deletion even if storage deletion encounters an issue
-        pass
+        pass  # Proceed with DB deletion even if storage deletion fails
 
     await db.delete(resume)
     await db.commit()

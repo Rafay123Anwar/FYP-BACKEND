@@ -1,14 +1,27 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.core.config import settings
+from app.core.database import engine
 from app.routers import ai, auth, profile, resume
 
-app = FastAPI(title=settings.PROJECT_NAME)
 
-# High-concurrency performance: compress JSON payloads > 1KB
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: pre-warm DB connection pool so first request isn't cold."""
+    async with engine.connect():
+        pass  # forces the pool to create its first connection
+    yield
+    # Shutdown: dispose engine cleanly
+    await engine.dispose()
+
+
+app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
+
+# Compress JSON payloads > 2KB only (avoid wasting CPU on tiny error responses)
+app.add_middleware(GZipMiddleware, minimum_size=2048)
 
 app.add_middleware(
     CORSMiddleware,

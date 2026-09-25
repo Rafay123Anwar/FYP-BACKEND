@@ -25,25 +25,31 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 import time
+from collections import OrderedDict
+from threading import Lock
 
-# Lightweight in-memory session cache (user_id -> (timestamp, User))
-_USER_CACHE: dict[int, tuple[float, User]] = {}
+# Bounded LRU in-memory user cache (user_id -> (timestamp, User))
+# Max 1000 entries prevents memory leak under heavy traffic.
+_USER_CACHE: OrderedDict[int, tuple[float, "User"]] = OrderedDict()
+_USER_CACHE_LOCK = Lock()
 USER_CACHE_TTL_SECONDS = 60.0
+_USER_CACHE_MAX = 1000
 
 
 def invalidate_user_cache(user_id: int | None = None) -> None:
     """Invalidate cached user instance or clear whole cache."""
-    if user_id is not None:
-        _USER_CACHE.pop(user_id, None)
-    else:
-        _USER_CACHE.clear()
+    with _USER_CACHE_LOCK:
+        if user_id is not None:
+            _USER_CACHE.pop(user_id, None)
+        else:
+            _USER_CACHE.clear()
 
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """Decode JWT token and fetch active authenticated user asynchronously with caching."""
+    """Decode JWT token and fetch active authenticated user with bounded LRU caching."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -63,18 +69,29 @@ async def get_current_user(
     except (ValueError, TypeError):
         raise credentials_exception
 
-    # Check in-memory cache first to avoid WAN network round-trip
+    # Check bounded LRU cache first to avoid WAN DB round-trip
     now = time.time()
-    cached = _USER_CACHE.get(user_id)
-    if cached and (now - cached[0] < USER_CACHE_TTL_SECONDS):
-        user = cached[1]
-    else:
-        # Asynchronous query execution using SQLAlchemy 2.0
+    with _USER_CACHE_LOCK:
+        cached = _USER_CACHE.get(user_id)
+        if cached and (now - cached[0] < USER_CACHE_TTL_SECONDS):
+            # Move to end (most-recently-used)
+            _USER_CACHE.move_to_end(user_id)
+            user = cached[1]
+        else:
+            user = None
+
+    if user is None:
+        # Async DB query — outside lock to avoid blocking event loop
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if user is None:
             raise credentials_exception
-        _USER_CACHE[user_id] = (now, user)
+        # Insert into cache with LRU eviction
+        with _USER_CACHE_LOCK:
+            _USER_CACHE[user_id] = (now, user)
+            _USER_CACHE.move_to_end(user_id)
+            if len(_USER_CACHE) > _USER_CACHE_MAX:
+                _USER_CACHE.popitem(last=False)  # evict oldest
 
     if not user.is_active:
         raise HTTPException(

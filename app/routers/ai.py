@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_db, require_role
 from app.models.profile import Resume
 from app.models.user import User, UserRole
-from app.schemas.ai import ParsedResumeOut, ResumeHealthOut
+from app.schemas.ai import ParsedResumeOut, ResumeHealthOut, GenerateHeadlineRequest, GenerateHeadlineResponse
 from app.services.ai_service import ai_service
 from app.utils.file_parser import extract_text_from_bytes, fetch_resume_bytes
 
@@ -165,3 +165,21 @@ async def parse_text_endpoint(
 ):
     """Parse raw resume text directly for live preview and testing."""
     return await ai_service.parse_resume_text(payload.text)
+
+
+@router.post(
+    "/generate-headline",
+    response_model=GenerateHeadlineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate a professional headline using AI",
+)
+async def generate_headline_endpoint(
+    payload: GenerateHeadlineRequest,
+    current_user: CandidateUser,
+):
+    """
+    Takes the candidate's existing profile data (skills, experience, etc.) and
+    uses AI to generate a punchy professional headline.
+    """
+    headline = await ai_service.generate_professional_headline(payload.profile_data)
+    return GenerateHeadlineResponse(headline=headline)

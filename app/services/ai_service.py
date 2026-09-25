@@ -595,5 +595,51 @@ Return ONLY the valid JSON object.
         parsed_data = await self.parse_resume_text(resume_text, resume_id=resume_id)
         return parsed_data.resume_health
 
+    async def generate_professional_headline(self, profile_data: dict) -> str:
+        """Generate a short, impactful professional headline based on profile data."""
+        client = self.get_client()
+
+        system_prompt = """
+You are an expert technical recruiter and resume writer.
+Your goal is to generate a single, punchy, professional headline for a candidate based on their profile data.
+The headline should be short (1-2 phrases, max 10 words), impactful, and highlight their core expertise, level, and primary skills.
+Examples of good headlines:
+- Senior Full-Stack Engineer | React & Node.js Expert
+- Data Scientist Specializing in Predictive Analytics
+- Machine Learning Engineer | NLP & Computer Vision
+
+Do not use jargon or buzzwords excessively. Keep it professional and factual.
+Return ONLY the generated headline string. No quotes, no markdown, no preamble.
+"""
+        user_prompt = f"Generate a professional headline for this candidate profile:\n{json.dumps(profile_data, indent=2)}"
+
+        try:
+            logger.info("Calling Cohere AI to generate professional headline...")
+            response = await client.chat(
+                model=settings.COHERE_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.4,
+            )
+        except Exception as e:
+            logger.error("Cohere API call failed during headline generation: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Cohere AI service error: {str(e)}",
+            )
+        
+        # Extract text safely
+        raw_output = ""
+        if response and response.message and response.message.content:
+            for item in response.message.content:
+                item_text = getattr(item, "text", None)
+                if item_text:
+                    raw_output += item_text
+                    
+        headline = raw_output.strip().strip('"').strip("'")
+        return headline
+
 
 ai_service = AIService()

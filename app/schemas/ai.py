@@ -186,3 +186,11 @@ class ParsedResumeOut(BaseModel):
         if v is None:
             return []
         return v
+
+
+class GenerateHeadlineRequest(BaseModel):
+    profile_data: dict
+
+
+class GenerateHeadlineResponse(BaseModel):
+    headline: str
